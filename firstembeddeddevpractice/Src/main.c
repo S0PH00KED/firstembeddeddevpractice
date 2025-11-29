@@ -16,52 +16,30 @@
 #define SYST_CSR   (*(volatile uint32_t *)0xE000E010UL)
 #define SYST_RVR   (*(volatile uint32_t *)0xE000E014UL)
 #define SYST_CVR   (*(volatile uint32_t *)0xE000E018UL)
-//Defines SYST_CFLAG as enabled at bit 16.
+
 #define SYST_CFLAG (1u << 16)
-//Defines SYST_CLKSOURCE as enabled at bit 2.
 #define SYST_CLKSOURCE (1u << 2)
-//defines SysTick at bit 0, as enabled.
 #define SYST_ENABLE (1u << 0)
+#define SYST_TICKINT (1u << 1)
 
 #define GPIOA ((volatile uint32_t*) GPIOA_BASE)
 #define RCC_IOPENR_GPIOA   (1 << 0)
 
-#define SDEL 100000
-#define LDEL 300000
+uint32_t systick_ms = 0;
 
-void systick_init(volatile uint32_t tick) {
-	SYST_RVR = tick - 1;
-	SYST_CVR = 0;
-	//Here I got confused, I originally had added SYST_ENABLE and SYST_CLKSOURCE together.
-	//Instead we OR them which combines the two bits into a single configuration value.
-	//Bit position 0 holds value 1, bit position 2 holds value 4
-	//Remember: bit positions represent a power of 2 because of positional notation.
+void interrupt_systick(void) {
 
-	uint32_t mask = SYST_ENABLE | SYST_CLKSOURCE;
-	//And OR them together. SYST_CSR is a 32 bit register. So our mask is something like
-	//0000 0000 0000 0000 0101
+	SYST_RVR = 2100 - 1;
+	uint32_t mask = SYST_TICKINT | SYST_ENABLE | SYST_CLKSOURCE;
 	SYST_CSR = (mask);
 }
 
-//Implementing our systick.
-void systick_delay(uint32_t tick) {
-	systick_init(tick);
-	while ((SYST_CSR & SYST_CFLAG) == 0) {
-		//wait
-	}
-	SYST_CSR = 0;
+//Cortex-M interrupt handlers must match the symbol names or the CPU will never call them.
+void SysTick_Handler(void) {
+	systick_ms++;
 }
-
-/* First iteration of a delay depended on clock speed.
-void delay(volatile uint32_t t)
-{
-    while (t--) __asm__("nop");
-}
-*/
 
 void led_toggle(uint8_t pin) {
-	//Previous code in main:
-	//GPIOA_ODR ^= (1 << 5);
 	GPIOA_ODR ^= (1u << pin); // Flip (invert) the output state of the selected pin using XOR.
 }
 
@@ -71,20 +49,6 @@ void led_on(uint8_t pin) {
 
 void led_off(uint8_t pin) {
 	GPIOA_ODR &= ~(1u << pin);
-}
-
-void dot(uint8_t pin) {
-	led_on(pin);
-	systick_delay(SDEL);
-	led_off(pin);
-	systick_delay(SDEL);
-}
-
-void dash(uint8_t pin) {
-	led_on(pin);
-	systick_delay(LDEL);
-	led_off(pin);
-	systick_delay(LDEL);
 }
 
 void gpio_init_led(uint8_t pin) {
@@ -97,42 +61,32 @@ void gpio_init_flipz(uint8_t pin) {
     GPIOA_MODER &= ~(3u << (pin * 2));
 }
 
-void blink_patternSOS(uint8_t pin) {
-
-	for (int x = 0; x < 3; x++) {
-		dot(pin);
-	}
-	for (int x = 0; x < 3; x++) {
-		dash(pin);
-	}
-	for (int x = 0; x < 3; x++) {
-		dot(pin);
-	}
-	delay(1000000);
-}
-
 int main(void)
 {
 
     // enable GPIOA clock
     RCC_IOPENR |= RCC_IOPENR_GPIOA;
 
+	uint32_t last_t = 0;
+	interrupt_systick();
     // Set PA0 to input mode
     gpio_init_flipz(0);
     // set PA5 to output mode
     gpio_init_led(5);
 
-    /*while (1)
-    {
-        blink_patternSOS(5);
-    }
-    */
     while (1) {
-    	if (GPIOA_IDR & (1u << 0)) {
-    		led_on(5);
-    	}
-    	else {
-    		led_off(5);
-    	}
+        uint32_t now   = systick_ms;
+        uint32_t input = GPIOA_IDR & (1u << 0);
+
+        if (input) {
+            // button pressed > run blink scheduler
+            if (now - last_t >= 250) {
+                led_toggle(5);
+                last_t = now;
+            }
+        } else {
+            // button not pressed > force LED off
+            led_off(5);
+        }
     }
 }
